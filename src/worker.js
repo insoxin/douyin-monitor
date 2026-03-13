@@ -7,6 +7,10 @@ export default {
   async fetch(request, env) {
 
     const url = new URL(request.url)
+    if (url.pathname === "/collect") {
+      await collect(env)
+      return new Response("collect ok")
+    }
 
     if (url.pathname === "/api/data") {
       return getData(env)
