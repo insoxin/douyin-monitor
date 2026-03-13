@@ -21,7 +21,6 @@ export default {
       headers:{ "content-type":"text/html;charset=utf-8" }
     })
   }
-
 }
 
 async function collect(env){
@@ -29,6 +28,7 @@ async function collect(env){
   const sec_uid = env.SEC_UID
 
   if(!sec_uid){
+    console.log("SEC_UID missing")
     return
   }
 
@@ -43,21 +43,23 @@ async function collect(env){
 
   const html = await resp.text()
 
-  const match = html.match(/<script id="SIGI_STATE" type="application\\/json">(.*?)<\\/script>/)
+  const start = html.indexOf('<script id="SIGI_STATE" type="application/json">')
+  const end = html.indexOf('</script>', start)
 
-  if(!match){
+  if(start === -1 || end === -1){
     console.log("SIGI_STATE not found")
     return
   }
 
-  const json = JSON.parse(match[1])
+  const jsonText = html.slice(start + 47, end)
+
+  const json = JSON.parse(jsonText)
 
   const userModule = json.UserModule
 
   const userKey = Object.keys(userModule.users)[0]
 
   const u = userModule.users[userKey]
-
   const stats = userModule.stats[userKey]
 
   const data = {
@@ -73,7 +75,6 @@ async function collect(env){
     aweme:stats.videoCount,
 
     likes:stats.diggCount
-
   }
 
   const key = `history/${data.date}.json`
@@ -83,7 +84,6 @@ async function collect(env){
   if(!exist){
     await env.R2.put(key,JSON.stringify(data))
   }
-
 }
 
 async function getData(env){
@@ -115,7 +115,7 @@ async function getData(env){
 
 function dashboard(){
 
-return \`
+return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -131,8 +131,8 @@ return \`
 body{
 margin:0;
 background:#0f172a;
-color:white;
 font-family:Arial;
+color:white;
 }
 
 .container{
@@ -144,7 +144,11 @@ padding:40px;
 .card{
 background:#1e293b;
 padding:25px;
-border-radius:10px;
+border-radius:12px;
+margin-bottom:20px;
+}
+
+.range{
 margin-bottom:20px;
 }
 
@@ -156,6 +160,10 @@ margin-right:10px;
 border-radius:6px;
 color:white;
 cursor:pointer;
+}
+
+.range button:hover{
+background:#475569;
 }
 
 .chart{
@@ -173,23 +181,33 @@ height:320px;
 <h1>抖音账号监控</h1>
 
 <div class="range">
+
 <button onclick="setRange(7)">7天</button>
 <button onclick="setRange(30)">30天</button>
 <button onclick="setRange(90)">90天</button>
 <button onclick="setRange(365)">1年</button>
 <button onclick="setRange(9999)">全部</button>
+
 </div>
 
 <div class="card">
+<h3>粉丝趋势</h3>
 <div id="followersChart" class="chart"></div>
 </div>
 
 <div class="card">
+<h3>点赞趋势</h3>
 <div id="likesChart" class="chart"></div>
 </div>
 
 <div class="card">
+<h3>作品数量</h3>
 <div id="awemeChart" class="chart"></div>
+</div>
+
+<div class="card">
+<h3>日新增粉丝</h3>
+<div id="growthChart" class="chart"></div>
 </div>
 
 </div>
@@ -229,13 +247,20 @@ const followers=data.map(i=>i.followers)
 const likes=data.map(i=>i.likes)
 const aweme=data.map(i=>i.aweme)
 
-draw("followersChart","粉丝",dates,followers)
-draw("likesChart","点赞",dates,likes)
-draw("awemeChart","作品",dates,aweme)
+const growth=[]
+
+for(let i=1;i<data.length;i++){
+growth.push(data[i].followers-data[i-1].followers)
+}
+
+draw("followersChart",dates,followers)
+draw("likesChart",dates,likes)
+draw("awemeChart",dates,aweme)
+draw("growthChart",dates.slice(1),growth)
 
 }
 
-function draw(id,name,x,data){
+function draw(id,x,data){
 
 const chart=echarts.init(document.getElementById(id))
 
@@ -248,7 +273,6 @@ xAxis:{type:"category",data:x},
 yAxis:{type:"value"},
 
 series:[{
-name:name,
 type:"line",
 smooth:true,
 data:data
@@ -265,5 +289,5 @@ load()
 </body>
 
 </html>
-\`
+`
 }
