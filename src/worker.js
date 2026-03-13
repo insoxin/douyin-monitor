@@ -10,7 +10,7 @@ export default {
 
     if (url.pathname === "/collect") {
       await collect(env)
-      return new Response("collect done")
+      return new Response("collect ok")
     }
 
     if (url.pathname === "/api/data") {
@@ -28,39 +28,34 @@ async function collect(env){
   const sec_uid = env.SEC_UID
 
   if(!sec_uid){
-    console.log("SEC_UID missing")
     return
   }
 
-  const url = `https://www.douyin.com/user/${sec_uid}`
+  const api =
+  `https://www.iesdouyin.com/web/api/v2/user/info/?sec_uid=${sec_uid}`
 
-  const resp = await fetch(url,{
-    headers:{
-      "user-agent":"Mozilla/5.0",
-      "accept-language":"zh-CN"
-    }
-  })
+  let json=null
 
-  const html = await resp.text()
+  for(let i=0;i<3;i++){
 
-  const start = html.indexOf('<script id="SIGI_STATE" type="application/json">')
-  const end = html.indexOf('</script>', start)
+    const resp = await fetch(api,{
+      headers:{
+        "user-agent":"Mozilla/5.0"
+      }
+    })
 
-  if(start === -1 || end === -1){
-    console.log("SIGI_STATE not found")
+    try{
+      json = await resp.json()
+      if(json.user_info) break
+    }catch(e){}
+  }
+
+  if(!json || !json.user_info){
+    console.log("douyin api failed")
     return
   }
 
-  const jsonText = html.slice(start + 47, end)
-
-  const json = JSON.parse(jsonText)
-
-  const userModule = json.UserModule
-
-  const userKey = Object.keys(userModule.users)[0]
-
-  const u = userModule.users[userKey]
-  const stats = userModule.stats[userKey]
+  const u = json.user_info
 
   const data = {
 
@@ -68,13 +63,13 @@ async function collect(env){
 
     nickname:u.nickname,
 
-    followers:stats.followerCount,
+    followers:u.follower_count,
 
-    following:stats.followingCount,
+    following:u.following_count,
 
-    aweme:stats.videoCount,
+    aweme:u.aweme_count,
 
-    likes:stats.diggCount
+    likes:u.total_favorited
   }
 
   const key = `history/${data.date}.json`
@@ -170,6 +165,16 @@ background:#475569;
 height:320px;
 }
 
+.stats{
+display:flex;
+gap:40px;
+margin-bottom:20px;
+}
+
+.stat{
+font-size:18px;
+}
+
 </style>
 
 </head>
@@ -179,6 +184,22 @@ height:320px;
 <div class="container">
 
 <h1>抖音账号监控</h1>
+
+<div class="stats">
+
+<div class="stat">昵称<br><b id="nickname"></b></div>
+
+<div class="stat">粉丝<br><b id="followers"></b></div>
+
+<div class="stat">关注<br><b id="following"></b></div>
+
+<div class="stat">作品<br><b id="aweme"></b></div>
+
+<div class="stat">点赞<br><b id="likes"></b></div>
+
+<div class="stat">今日涨粉<br><b id="today"></b></div>
+
+</div>
 
 <div class="range">
 
@@ -196,6 +217,11 @@ height:320px;
 </div>
 
 <div class="card">
+<h3>日新增粉丝</h3>
+<div id="growthChart" class="chart"></div>
+</div>
+
+<div class="card">
 <h3>点赞趋势</h3>
 <div id="likesChart" class="chart"></div>
 </div>
@@ -203,11 +229,6 @@ height:320px;
 <div class="card">
 <h3>作品数量</h3>
 <div id="awemeChart" class="chart"></div>
-</div>
-
-<div class="card">
-<h3>日新增粉丝</h3>
-<div id="growthChart" class="chart"></div>
 </div>
 
 </div>
@@ -223,6 +244,8 @@ const resp=await fetch("/api/data")
 
 raw=await resp.json()
 
+updateStats()
+
 render()
 
 }
@@ -231,6 +254,27 @@ function setRange(r){
 
 range=r
 render()
+
+}
+
+function updateStats(){
+
+const last=raw[raw.length-1]
+
+document.getElementById("nickname").innerText=last.nickname
+document.getElementById("followers").innerText=last.followers
+document.getElementById("following").innerText=last.following
+document.getElementById("aweme").innerText=last.aweme
+document.getElementById("likes").innerText=last.likes
+
+if(raw.length>1){
+
+const prev=raw[raw.length-2]
+
+document.getElementById("today").innerText=
+last.followers-prev.followers
+
+}
 
 }
 
