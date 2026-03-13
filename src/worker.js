@@ -9,7 +9,7 @@ export default {
   const url = new URL(request.url)
 
   if (url.pathname === "/collect") {
-   return collect(env,true)
+   return collect(env) // 修改点1：去掉了这里的 true，使其正常走数据保存逻辑
   }
 
   if (url.pathname === "/api/data") {
@@ -65,6 +65,7 @@ async function collect(env,debug=false){
 
  const u = json.user_info
 
+ // 修改点2：更新了数据解析，解决头像不显示，并将字符串转为数字
  const data = {
 
   date:new Date().toISOString().slice(0,10),
@@ -73,17 +74,17 @@ async function collect(env,debug=false){
 
   signature:u.signature || "",
 
-  avatar:u.avatar_larger?.url_list?.[0] || "",
+  avatar:u.avatar_larger?.url_list?.[0] || u.avatar_medium?.url_list?.[0] || u.avatar_thumb?.url_list?.[0] || "",
 
-  followers:u.mplatform_followers_count || u.follower_count,
+  followers:Number(u.mplatform_followers_count || u.follower_count || 0),
 
-  following:u.following_count,
+  following:Number(u.following_count || 0),
 
-  aweme:u.aweme_count,
+  aweme:Number(u.aweme_count || 0),
 
-  favoriting:u.favoriting_count,
+  favoriting:Number(u.favoriting_count || 0),
 
-  likes:u.total_favorited
+  likes:Number(u.total_favorited || 0)
 
  }
 
