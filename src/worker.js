@@ -13,12 +13,16 @@ export default {
   if (url.pathname === "/manifest.json") return getManifest()
   if (url.pathname === "/sw.js") return getServiceWorker()
 
-  // 2. 核心功能路由（加锁保护）
-  if (!checkAuth(request, env)) {
-   return new Response("未授权访问", {
-    status: 401,
-    headers: { "WWW-Authenticate": 'Basic realm="Douyin Monitor Auth"' }
-   })
+  // 2. 核心功能路由（加锁保护，改用 Cookie 校验）
+  if (!checkAuthCookie(request, env)) {
+    // 拦截登录请求
+    if (url.pathname === "/login" && request.method === "POST") {
+        return handleLogin(request, env);
+    }
+    // 未登录时返回漂亮的登录页面
+    return new Response(loginPage(), {
+        headers: { "content-type": "text/html; charset=utf-8" }
+    });
   }
 
   if (url.pathname === "/collect") {
@@ -41,25 +45,64 @@ export default {
 
 }
 
-// ==== 身份验证逻辑 ====
-function checkAuth(request, env) {
-  // 默认账号 admin，密码 123456 (你可以在 Cloudflare 后台设置 ADMIN_USER 和 ADMIN_PASS 环境变量来覆盖)
-  const expectedUser = env.ADMIN_USER || "admin";
+// ==== 身份验证逻辑 (Cookie版) ====
+function checkAuthCookie(request, env) {
+  const cookie = request.headers.get("Cookie") || "";
+  const expectedPass = env.ADMIN_PASS || "123456"; // 现在只需要密码
+  return cookie.includes(`auth=${expectedPass}`);
+}
+
+async function handleLogin(request, env) {
+  const formData = await request.formData().catch(() => null);
+  const pass = formData ? formData.get("password") : "";
   const expectedPass = env.ADMIN_PASS || "123456";
   
-  const authHeader = request.headers.get("Authorization");
-  if (!authHeader) return false;
-  
-  const [scheme, encoded] = authHeader.split(" ");
-  if (scheme !== "Basic" || !encoded) return false;
-  
-  try {
-    const decoded = atob(encoded);
-    const [user, pass] = decoded.split(":");
-    return user === expectedUser && pass === expectedPass;
-  } catch (e) {
-    return false;
+  if (pass === expectedPass) {
+      return new Response("Login Success", {
+          status: 302,
+          headers: {
+              "Location": "/",
+              // 设置 30 天免登录 Cookie
+              "Set-Cookie": `auth=${pass}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Strict`
+          }
+      });
+  } else {
+      return new Response(loginPage("密码错误，请重试"), {
+          status: 401,
+          headers: { "content-type": "text/html; charset=utf-8" }
+      });
   }
+}
+
+function loginPage(errorMsg = "") {
+  return `<!DOCTYPE html>
+  <html lang="zh-CN">
+  <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>登录 - 数据中心</title>
+      <style>
+          body { background: #0f172a; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+          .login-box { background: #1e293b; padding: 40px; border-radius: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); width: 100%; max-width: 320px; text-align: center; }
+          h2 { margin-top: 0; margin-bottom: 24px; color: #3b82f6; }
+          input[type="password"] { width: 100%; padding: 14px; margin-bottom: 16px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: white; box-sizing: border-box; outline: none; font-size: 16px; transition: border-color 0.2s; }
+          input[type="password"]:focus { border-color: #3b82f6; }
+          button { width: 100%; padding: 14px; border: none; border-radius: 8px; background: #3b82f6; color: white; font-size: 16px; font-weight: bold; cursor: pointer; transition: background 0.3s; }
+          button:hover { background: #2563eb; }
+          .error { color: #ef4444; font-size: 14px; margin-bottom: 16px; min-height: 20px; }
+      </style>
+  </head>
+  <body>
+      <div class="login-box">
+          <h2>安全验证</h2>
+          <div class="error">${errorMsg}</div>
+          <form action="/login" method="POST">
+              <input type="password" name="password" placeholder="请输入访问密码" required autofocus>
+              <button type="submit">进入控制台</button>
+          </form>
+      </div>
+  </body>
+  </html>`;
 }
 
 async function douyinRequest(sec_uid){
@@ -190,7 +233,7 @@ async function debug(env){
 
 function getManifest() {
  const manifest = {
-  name: "抖音账号监控", short_name: "抖音监控", start_url: "/", display: "standalone",
+  name: "数据中心", short_name: "数据中心", start_url: "/", display: "standalone",
   background_color: "#0f172a", theme_color: "#0f172a", description: "个人抖音账号数据追踪面板",
   icons: [
    { src: "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192", sizes: "192x192", type: "image/png" },
@@ -359,6 +402,21 @@ body {
         <div class="chart-wrapper"><div id="trendChart" class="chart"></div></div>
         <div class="chart-wrapper"><div id="changeChart" class="chart"></div></div>
     </div>
+
+    <div class="history-table-wrapper" style="margin-top: 24px; background: var(--panel); border-radius: 16px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); overflow-x: auto;">
+        <h3 style="margin-top:0; font-size: 1.2rem; margin-bottom: 16px;">个人资料变更历史</h3>
+        <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--border); color: var(--text-muted);">
+                    <th style="padding: 12px 8px;">记录日期</th>
+                    <th style="padding: 12px 8px;">头像</th>
+                    <th style="padding: 12px 8px;">昵称</th>
+                    <th style="padding: 12px 8px;">签名</th>
+                </tr>
+            </thead>
+            <tbody id="historyTbody"></tbody>
+        </table>
+    </div>
 </div>
 
 <script>
@@ -382,6 +440,7 @@ async function load() {
         if(raw.length > 0) {
             updateStats();
             render();
+            renderHistoryTable(); // 渲染历史资料表格
         }
     } catch (e) {
         console.error("加载数据失败:", e);
@@ -391,6 +450,32 @@ async function load() {
         overlay.style.opacity = '0';
         setTimeout(() => overlay.style.display = 'none', 400);
     }
+}
+
+// 渲染历史资料变更表
+function renderHistoryTable() {
+    const tbody = document.getElementById("historyTbody");
+    tbody.innerHTML = "";
+    // 将数据反转，最新日期排在最前
+    const reversed = [...raw].reverse();
+    
+    let html = "";
+    let prev = null;
+    
+    reversed.forEach(item => {
+        // 只有当昵称、签名或头像发生变化时，才在表格中显示一条记录（避免每天重复相同的数据）
+        if (!prev || prev.nickname !== item.nickname || prev.signature !== item.signature || prev.avatar !== item.avatar) {
+            html += \`
+            <tr style="border-bottom: 1px solid #334155;">
+                <td style="padding: 12px 8px; color: #94a3b8; white-space: nowrap;">\${item.date}</td>
+                <td style="padding: 12px 8px;"><img src="\${item.avatar || ''}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);"></td>
+                <td style="padding: 12px 8px; font-weight: 500;">\${item.nickname || '-'}</td>
+                <td style="padding: 12px 8px; max-width: 300px; color: #cbd5e1;">\${(item.signature || '-').replace(/\\n/g, '<br>')}</td>
+            </tr>\`;
+            prev = item;
+        }
+    });
+    tbody.innerHTML = html;
 }
 
 function setRange(r, btnEl) {
@@ -477,15 +562,19 @@ function format(n) {
     return n.toLocaleString(); 
 }
 
-// === 导出数据逻辑 ===
+// === 导出数据逻辑（已加入资料字段） ===
 function exportData(type) {
     if(!raw || raw.length === 0) return alert("暂无数据可导出");
     let content, mime, filename;
 
     if (type === 'csv') {
-        content = "\\uFEFF日期,粉丝总数,关注数,作品数,获赞总数,喜欢点赞数\\n"; // \\uFEFF 防止 Excel 中文乱码
+        content = "\\uFEFF日期,昵称,签名,头像URL,粉丝总数,关注数,作品数,获赞总数,喜欢点赞数\\n"; // \\uFEFF 防止 Excel 中文乱码
         raw.forEach(r => {
-            content += \`\${r.date},\${r.followers},\${r.following},\${r.aweme},\${r.likes},\${r.favoriting}\\n\`;
+            // 处理昵称和签名中可能包含的逗号或换行，转义成双引号包裹
+            const safeNickname = \`"\${(r.nickname || '').replace(/"/g, '""')}"\`;
+            const safeSignature = \`"\${(r.signature || '').replace(/"/g, '""').replace(/\\n/g, ' ')}"\`;
+            
+            content += \`\${r.date},\${safeNickname},\${safeSignature},\${r.avatar || ''},\${r.followers},\${r.following},\${r.aweme},\${r.likes},\${r.favoriting}\\n\`;
         });
         mime = "text/csv;charset=utf-8;";
         filename = "douyin_monitor_data.csv";
