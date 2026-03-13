@@ -8,3 +8,5 @@ bucket_name = "douyin-monitor"
 
 [triggers]
 crons = ["0 0 * * *"]
+
+[vars]
