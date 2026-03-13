@@ -354,7 +354,7 @@ body {
 
 <div class="container">
     <div class="header" style="display: flex; justify-content: space-between; align-items: center;">
-        <h2>抖音账号监控中心</h2>
+        <h2>数据中心</h2>
         <div class="control-group">
             <button class="btn btn-export" onclick="exportData('csv')">导出 CSV</button>
             <button class="btn btn-export" onclick="exportData('json')">导出 JSON</button>
