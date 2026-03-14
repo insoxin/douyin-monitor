@@ -1,7 +1,6 @@
 export default {
 
  async scheduled(event, env) {
-  // 定时任务不需要密码校验
   await collect(env)
  },
 
@@ -9,17 +8,13 @@ export default {
 
   const url = new URL(request.url)
 
-  // 1. PWA 必需的公开文件（不能加锁，否则手机端无法安装）
   if (url.pathname === "/manifest.json") return await getManifest(env)
   if (url.pathname === "/sw.js") return getServiceWorker()
 
-  // 2. 核心功能路由（加锁保护，改用 Cookie 校验）
   if (!checkAuthCookie(request, env)) {
-    // 拦截登录请求
     if (url.pathname === "/login" && request.method === "POST") {
         return handleLogin(request, env);
     }
-    // 未登录时返回漂亮的登录页面
     return new Response(loginPage(), {
         headers: { "content-type": "text/html; charset=utf-8" }
     });
@@ -29,13 +24,11 @@ export default {
    return collect(env) 
   }
 
-  // 增加强制重建缓存的后门路由
   if (url.pathname === "/api/build") {
    await buildCache(env)
    return new Response("Cache Rebuilt Success")
   }
 
-  // API 路由现在接收 request 参数以处理 ?days=30 按需加载
   if (url.pathname === "/api/data") {
    return getData(request, env)
   }
@@ -52,7 +45,7 @@ export default {
 
 }
 
-// ==== 身份验证逻辑 (Cookie版) ====
+// ==== 身份验证逻辑 ====
 function checkAuthCookie(request, env) {
   const cookie = request.headers.get("Cookie") || "";
   const expectedPass = env.ADMIN_PASS || "123456"; 
@@ -125,7 +118,6 @@ async function douyinRequest(sec_uid){
  return new TextDecoder("utf-8").decode(buffer)
 }
 
-// ==== 数据读写分离缓存构建逻辑 ====
 async function buildCache(env) {
   if(!env.R2) return [];
   const list = await env.R2.list({ prefix: "history/" });
@@ -178,11 +170,8 @@ async function collect(env, debug=false){
 
   if(!env.R2) return new Response("Worker 环境变量错误：没有找到 env.R2", { status: 500 })
 
-  // 【优化3】：彻底解决文件读写锁竞争。collect 阶段只原子的写入当天的独立文件
   const dailyKey = `history/${data.date}.json`
   await env.R2.put(dailyKey, JSON.stringify(data))
-
-  // 然后调用后台路由，遍历所有独立文件重建视图缓存，确保 all.json 数据百分百准确
   await buildCache(env)
 
   return new Response("collect ok")
@@ -193,7 +182,6 @@ async function collect(env, debug=false){
 }
 
 async function getData(request, env){
-  // 【优化5】：按需加载。提取天数范围，默认请求30天
   const url = new URL(request.url);
   const daysStr = url.searchParams.get("days") || "30";
   const days = parseInt(daysStr, 10);
@@ -204,11 +192,9 @@ async function getData(request, env){
   if (allFile) {
     arr = await allFile.json()
   } else {
-    // 缓存丢失则即刻重建
     arr = await buildCache(env)
   }
 
-  // 服务端完成数据切割以节省带宽
   let resData = arr;
   if (days !== 9999 && arr.length > days) {
       resData = arr.slice(-days);
@@ -224,9 +210,11 @@ async function debug(env){
  return new Response(text,{ headers:{ "content-type":"text/plain; charset=utf-8"} })
 }
 
+// ==== 动态 PWA 图标核心逻辑 ====
 async function getManifest(env) {
- let avatarUrl = "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192"; 
- let appName = "数据中心"; // 默认名字
+ let appName = "数据中心"; 
+ let icon192 = "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192";
+ let icon512 = "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=512";
 
  try {
    if (env && env.R2) {
@@ -235,9 +223,13 @@ async function getManifest(env) {
        const allData = await allFile.json();
        if (allData.length > 0) {
            const last = allData[allData.length - 1];
-           if (last.avatar) avatarUrl = last.avatar;
-           // 【更新】：将用户的昵称用作 PWA 的 App 名字
            if (last.nickname) appName = last.nickname;
+           if (last.avatar) {
+               // 利用 wsrv.nl 强制裁剪为标准的 192 和 512 尺寸，满足 PWA 安装硬性要求
+               const safeUrl = encodeURIComponent(last.avatar);
+               icon192 = `https://wsrv.nl/?url=${safeUrl}&w=192&h=192&output=png&fit=cover`;
+               icon512 = `https://wsrv.nl/?url=${safeUrl}&w=512&h=512&output=png&fit=cover`;
+           }
        }
      }
    }
@@ -249,38 +241,39 @@ async function getManifest(env) {
   name: appName, short_name: appName, start_url: "/", display: "standalone",
   background_color: "#0f172a", theme_color: "#0f172a", description: "个人抖音账号数据追踪面板",
   icons: [
-   { src: avatarUrl, sizes: "192x192", type: "image/png" },
-   { src: avatarUrl, sizes: "512x512", type: "image/png" }
+   { src: icon192, sizes: "192x192", type: "image/png" },
+   { src: icon512, sizes: "512x512", type: "image/png" },
+   { src: icon192, sizes: "192x192", type: "image/png", purpose: "maskable" },
+   { src: icon512, sizes: "512x512", type: "image/png", purpose: "maskable" }
   ]
  }
  return new Response(JSON.stringify(manifest), { headers: { "content-type": "application/json; charset=utf-8" } })
 }
 
-// 【优化2】：增强型 Service Worker，支持静态资源离线缓存
 function getServiceWorker() {
  const sw = `
-  const CACHE_NAME = 'dy-monitor-v2';
-  const ASSETS = [
-      '/',
-      '/manifest.json',
-      'https://registry.npmmirror.com/echarts/5.5.0/files/dist/echarts.min.js'
-  ];
+  const CACHE_NAME = 'dy-monitor-v4';
 
   self.addEventListener('install', (e) => { 
-      e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
       self.skipWaiting(); 
   });
   
+  self.addEventListener('activate', (e) => {
+      e.waitUntil(caches.keys().then(keys => Promise.all(
+          keys.map(k => { if(k !== CACHE_NAME) return caches.delete(k) })
+      )));
+      self.clients.claim();
+  });
+
   self.addEventListener('fetch', (e) => { 
       const url = new URL(e.request.url);
       
-      // 核心 API 不走缓存，确保数据实时性
+      // 核心数据不走离线缓存，确保数据实时性
       if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/collect')) {
-          e.respondWith(fetch(e.request));
-          return;
+          return; 
       }
 
-      // 静态资源使用 Network First 策略，断网时 fallback 到缓存
+      // 静态资源使用 Network First 策略
       e.respondWith(
           fetch(e.request)
           .then(res => {
@@ -288,7 +281,7 @@ function getServiceWorker() {
               caches.open(CACHE_NAME).then(c => c.put(e.request, resClone));
               return res;
           })
-          .catch(() => caches.match(e.request).then(cachedRes => cachedRes || new Response("网络连接已断开")))
+          .catch(() => caches.match(e.request).then(cachedRes => cachedRes || new Response("网络连接已断开", {status: 503})))
       );
   });
  `
@@ -304,6 +297,7 @@ return `<!DOCTYPE html>
 <title>Douyin Monitor</title>
 
 <link rel="manifest" href="/manifest.json">
+<link id="favicon" rel="icon" type="image/png" href="https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=32">
 <meta name="theme-color" content="#0f172a">
 <link rel="apple-touch-icon" href="https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -469,7 +463,7 @@ if ('serviceWorker' in navigator) {
 
 let raw = [];
 let currentRange = 30;
-let loadedRange = 0; // 记录目前已经从后端拉取的数据天数
+let loadedRange = 0; 
 let currentMetric = 'followers';
 
 const metricNames = {
@@ -531,11 +525,10 @@ function setRange(r, btnEl) {
     document.querySelectorAll('.r-btn').forEach(btn => btn.classList.remove('active'));
     if(btnEl) btnEl.classList.add('active');
 
-    // 【优化5】：如果请求的范围大于当前加载的范围，才去服务器拿新数据
     if (currentRange > loadedRange) {
         load(currentRange);
     } else {
-        render(); // 本地数据直接截取重绘
+        render(); 
     }
 }
 
@@ -551,13 +544,17 @@ function updateStats() {
 
     document.getElementById("avatar").src = last.avatar || '';
     
+    // 动态同步网页 Favicon 和 iOS 的桌面快捷图标
+    const favicon = document.getElementById("favicon");
+    if(favicon) favicon.href = last.avatar || 'https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=32';
+
     const appleIcon = document.querySelector('link[rel="apple-touch-icon"]');
     if(appleIcon) appleIcon.href = last.avatar || 'https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192';
 
     const nickNameText = last.nickname || '未知';
     document.getElementById("nickname").innerText = nickNameText;
-    document.title = nickNameText + "的面板"; // 更新页面 Title
-    document.getElementById("app-title").innerText = nickNameText + "的数据"; // 更新页面顶栏
+    document.title = nickNameText + "的面板"; 
+    document.getElementById("app-title").innerText = nickNameText + "的数据"; 
     
     document.getElementById("signature").innerText = last.signature || '暂无签名';
     
@@ -603,7 +600,6 @@ function drawChart(id, xData, yData, title, colorStr) {
 
     chart.setOption({
         title: { text: title, textStyle: { color: '#e2e8f0', fontSize: 15, fontWeight: 'normal' } },
-        // 【优化4】：加入 confine: true，防止 tooltip 在手机端被截断
         tooltip: { trigger: 'axis', confine: true, backgroundColor: 'rgba(30, 41, 59, 0.9)', borderColor: '#334155', textStyle: { color: '#f8fafc' } },
         grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
         xAxis: { type: "category", data: xData, axisLabel: { color: '#94a3b8' }, axisLine: { lineStyle: { color: '#334155' } } },
@@ -656,7 +652,6 @@ function exportData(type) {
     document.body.removeChild(link);
 }
 
-// 初始化时默认加载 30 天的数据
 load(30);
 </script>
 </body>
