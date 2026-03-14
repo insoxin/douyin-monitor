@@ -10,7 +10,7 @@ export default {
   const url = new URL(request.url)
 
   // 1. PWA 必需的公开文件（不能加锁，否则手机端无法安装）
-  if (url.pathname === "/manifest.json") return getManifest()
+  if (url.pathname === "/manifest.json") return await getManifest(env)
   if (url.pathname === "/sw.js") return getServiceWorker()
 
   // 2. 核心功能路由（加锁保护，改用 Cookie 校验）
@@ -231,13 +231,30 @@ async function debug(env){
  return new Response(text,{ headers:{ "content-type":"text/plain; charset=utf-8"} })
 }
 
-function getManifest() {
+async function getManifest(env) {
+ let avatarUrl = "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192"; // 默认兜底图标
+
+ // 尝试从 R2 读取最新数据获取头像
+ try {
+   if (env && env.R2) {
+     const allFile = await env.R2.get("history/all.json");
+     if (allFile) {
+       const allData = await allFile.json();
+       if (allData.length > 0 && allData[allData.length - 1].avatar) {
+         avatarUrl = allData[allData.length - 1].avatar;
+       }
+     }
+   }
+ } catch (e) {
+   console.error("获取头像作为PWA图标失败", e);
+ }
+
  const manifest = {
   name: "数据中心", short_name: "数据中心", start_url: "/", display: "standalone",
   background_color: "#0f172a", theme_color: "#0f172a", description: "个人抖音账号数据追踪面板",
   icons: [
-   { src: "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192", sizes: "192x192", type: "image/png" },
-   { src: "https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=512", sizes: "512x512", type: "image/png" }
+   { src: avatarUrl, sizes: "192x192", type: "image/png" },
+   { src: avatarUrl, sizes: "512x512", type: "image/png" }
   ]
  }
  return new Response(JSON.stringify(manifest), { headers: { "content-type": "application/json; charset=utf-8" } })
@@ -453,7 +470,6 @@ async function load() {
 }
 
 // 渲染历史资料变更表
-// 渲染历史资料变更表（限制最多显示 5 条）
 function renderHistoryTable() {
     const tbody = document.getElementById("historyTbody");
     tbody.innerHTML = "";
@@ -502,6 +518,11 @@ function updateStats() {
     const last = raw[raw.length - 1];
 
     document.getElementById("avatar").src = last.avatar || '';
+    
+    // 动态替换 iOS 的保存图标
+    const appleIcon = document.querySelector('link[rel="apple-touch-icon"]');
+    if(appleIcon) appleIcon.href = last.avatar || 'https://ui-avatars.com/api/?name=DY&background=3b82f6&color=fff&size=192';
+
     document.getElementById("nickname").innerText = last.nickname || '未知';
     document.getElementById("signature").innerText = last.signature || '暂无签名';
     
@@ -568,7 +589,7 @@ function format(n) {
     return n.toLocaleString(); 
 }
 
-// === 导出数据逻辑（已加入资料字段） ===
+// === 导出数据逻辑 ===
 function exportData(type) {
     if(!raw || raw.length === 0) return alert("暂无数据可导出");
     let content, mime, filename;
