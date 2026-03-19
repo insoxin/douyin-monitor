@@ -496,26 +496,49 @@ async function load(days) {
 function renderHistoryTable() {
     const tbody = document.getElementById("historyTbody");
     tbody.innerHTML = "";
-    const reversed = [...raw].reverse();
+    
+    // 辅助函数：提取头像的核心路径，忽略动态的CDN域名和防盗链参数
+    const getAvatarPath = (url) => {
+        if (!url) return "";
+        try {
+            return new URL(url).pathname;
+        } catch (e) {
+            return url;
+        }
+    };
+
+    const changes = [];
+    let prev = null;
+    
+    // 1. 先正序遍历 (老 -> 新)，找出真实发生变更的初始节点
+    for (const item of raw) {
+        if (!prev || 
+            prev.nickname !== item.nickname || 
+            prev.signature !== item.signature || 
+            getAvatarPath(prev.avatar) !== getAvatarPath(item.avatar)) {
+            
+            changes.push(item);
+            prev = item;
+        }
+    }
+    
+    // 2. 将真实的变更记录反转，最新的变更排在最前
+    const reversedChanges = changes.reverse();
     
     let html = "";
-    let prev = null;
     let count = 0; 
     const MAX_ROWS = 5; 
     
-    for (const item of reversed) {
+    for (const item of reversedChanges) {
         if (count >= MAX_ROWS) break; 
-        if (!prev || prev.nickname !== item.nickname || prev.signature !== item.signature || prev.avatar !== item.avatar) {
-            html += \`
-            <tr style="border-bottom: 1px solid #334155;">
-                <td style="padding: 12px 8px; color: #94a3b8; white-space: nowrap;">\${item.date}</td>
-                <td style="padding: 12px 8px;"><img src="\${item.avatar || ''}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);"></td>
-                <td style="padding: 12px 8px; font-weight: 500;">\${item.nickname || '-'}</td>
-                <td style="padding: 12px 8px; max-width: 300px; color: #cbd5e1;">\${(item.signature || '-').replace(/\\n/g, '<br>')}</td>
-            </tr>\`;
-            prev = item;
-            count++;
-        }
+        html += \`
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding: 12px 8px; color: #94a3b8; white-space: nowrap;">\${item.date}</td>
+            <td style="padding: 12px 8px;"><img src="\${item.avatar || ''}" style="width: 36px; height: 36px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);"></td>
+            <td style="padding: 12px 8px; font-weight: 500;">\${item.nickname || '-'}</td>
+            <td style="padding: 12px 8px; max-width: 300px; color: #cbd5e1;">\${(item.signature || '-').replace(/\\n/g, '<br>')}</td>
+        </tr>\`;
+        count++;
     }
     tbody.innerHTML = html;
 }
